@@ -29,140 +29,9 @@
 #include <android/log.h>
 #include <vector>
 #include <algorithm>
+#include "PassmanOpensslWrapper.h"
 
 #define LOG_TAG "SJCL"
-
-void handleErrors(const char* error){
-    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, (const char*)"FUCK THIS SHIT GOT AN ERROR: %s", error);
-}
-
-int decryptccm(unsigned char *ciphertext, int ciphertext_len, unsigned char *aad,
-               int aad_len, unsigned char *tag, unsigned char *key, unsigned char *iv,
-               unsigned char *plaintext
-) {
-    EVP_CIPHER_CTX *ctx;
-    int len;
-    int plaintext_len;
-    int ret;
-
-    /* Create and initialise the context */
-    if(!(ctx = EVP_CIPHER_CTX_new())) handleErrors("Error initializing context");
-
-    /* Initialise the decryption operation. */
-    if(1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_ccm(), NULL, NULL, NULL)) handleErrors("Error setting crypto mode");
-
-    int lol = 2;
-    if (ciphertext_len >= 1<<16) lol++;
-    if (ciphertext_len >= 1<<24) lol++;
-
-    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, 15-lol, NULL)) handleErrors("Error setting IV Length");
-
-    /* Set expected tag value. */
-    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, 8, tag)) handleErrors("Error setting TAG value");
-
-    /* Initialise key and IV */
-    if(1 != EVP_DecryptInit_ex(ctx, NULL, NULL, key, iv)) handleErrors("Error setting KEY and IV");
-
-    /* Provide the total ciphertext length
-     */
-    if(1 != EVP_DecryptUpdate(ctx, NULL, &len, NULL, ciphertext_len)) handleErrors("Error setting cyphertext length");
-
-    /* Provide any AAD data. This can be called zero or more times as
-     * required
-     */
-    if(1 != EVP_DecryptUpdate(ctx, NULL, &len, aad, aad_len)) handleErrors("Error setting AAD data");
-
-    /* Provide the message to be decrypted, and obtain the plaintext output.
-     * EVP_DecryptUpdate can be called multiple times if necessary
-     */
-    ret = EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len);
-
-    plaintext_len = len;
-
-    /* Clean up */
-    EVP_CIPHER_CTX_free(ctx);
-
-    if(ret > 0)
-    {
-        /* Success */
-        return plaintext_len;
-    }
-    else
-    {
-        /* Verify failed */
-        return -1;
-    }
-}
-
-int encryptccm(unsigned char *plaintext, int plaintext_len,
-                unsigned char *aad, int aad_len,
-                unsigned char *key,
-                unsigned char *iv,
-                int iv_len,
-                unsigned char *ciphertext,
-                unsigned char *tag,
-                int tag_len)
-{
-    EVP_CIPHER_CTX *ctx;
-
-    int len;
-
-    int ciphertext_len;
-
-
-    /* Create and initialise the context */
-    if(!(ctx = EVP_CIPHER_CTX_new()))
-        handleErrors("Error initializing context");
-
-    /* Initialise the encryption operation. */
-    if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_ccm(), NULL, NULL, NULL))
-        handleErrors("Error setting crypto mode");
-
-    /* Set IV length */
-    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, iv_len, NULL))
-        handleErrors("Error setting IV Length");
-
-    /* Set tag length */
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, tag_len, NULL);
-
-    /* Initialise key and IV */
-    if(1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv))
-        handleErrors("Error setting KEY and IV");
-
-    /* Provide the total plaintext length */
-    if(1 != EVP_EncryptUpdate(ctx, NULL, &len, NULL, plaintext_len))
-        handleErrors("Error setting plaintext length");
-
-    /* Provide any AAD data. This can be called zero or one times as required */
-    if(1 != EVP_EncryptUpdate(ctx, NULL, &len, aad, aad_len))
-        handleErrors("Error setting AAD data");
-
-    /*
-     * Provide the message to be encrypted, and obtain the encrypted output.
-     * EVP_EncryptUpdate can only be called once for this.
-     */
-    if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len,
-                              reinterpret_cast<const unsigned char *>(plaintext), plaintext_len))
-        handleErrors("Error obtaining the encrypted output");
-    ciphertext_len = len;
-
-    /*
-     * Finalise the encryption. Normally ciphertext bytes may be written at
-     * this stage, but this does not occur in CCM mode.
-     */
-    if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
-        handleErrors("Error finalizing the encryption");
-    ciphertext_len += len;
-
-    /* Get the tag */
-    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_GET_TAG, tag_len, tag))
-        handleErrors("Error getting the encryption tag");
-
-    /* Clean up */
-    EVP_CIPHER_CTX_free(ctx);
-
-    return ciphertext_len;
-}
 
 /**
  * Casts an WString to an standard char array, beware, it does not care about encoding!
@@ -181,6 +50,7 @@ using namespace WLF::Crypto;
 
 char* SJCL::decrypt(string sjcl_json, string key) {
     JSONValue *data = JSON::Parse(sjcl_json.c_str());
+    PassmanOpensslWrapper pow;
 
     if (data == NULL || ! data->IsObject()) {
         __android_log_write(ANDROID_LOG_ERROR, LOG_TAG, "Error parsing the SJCL JSON");
@@ -228,7 +98,7 @@ char* SJCL::decrypt(string sjcl_json, string key) {
 
     char* ret = NULL;
     // Decrypt the data
-    int plaintext_len = decryptccm(cryptogram->data, cyphertext_data_length, (unsigned char *) adata, strlen(adata),
+    int plaintext_len = pow.decryptccm(cryptogram->data, cyphertext_data_length, (unsigned char *) adata, strlen(adata),
                &cryptogram->data[cyphertext_data_length], derived_key, iv_raw->data, plaintext);
 
     if (0 < plaintext_len) {
@@ -267,6 +137,7 @@ int getInsecureRandomNumber(int min, int max) {
 }
 
 char* SJCL::encrypt(char* plaintext, const string& key) {
+    PassmanOpensslWrapper pow;
     int plaintext_len = strlen(plaintext);
     int iv_len = 13;    // use 13 because 15-lol (with initial lol=2) is hardcoded in the decryptccm implementation
 
@@ -304,7 +175,7 @@ char* SJCL::encrypt(char* plaintext, const string& key) {
     ciphertext = (unsigned char *) malloc(sizeof(unsigned char) * strlen(plaintext) * ciphertext_allocation_multiplicator);
 
     unsigned char *tmp_plaintext = reinterpret_cast<unsigned char *>(plaintext);
-    int ciphertext_len = encryptccm(tmp_plaintext, strlen(plaintext), additional, strlen ((char *)additional), derived_key, iv, iv_len, ciphertext, tag, ts);
+    int ciphertext_len = pow.encryptccm(tmp_plaintext, strlen(plaintext), additional, strlen ((char *)additional), derived_key, iv, iv_len, ciphertext, tag, ts);
     if (0 < ciphertext_len) {
         uint8_t *ciphertext_with_tag = static_cast<uint8_t *>(malloc(sizeof(char *) * (ciphertext_len + ts)));
         memcpy(ciphertext_with_tag, ciphertext, ciphertext_len);

@@ -33,6 +33,12 @@ add_library(
 )
 
 add_library(
+    passman-openssl-wrapper-lib
+    STATIC
+    src/main/cpp/PassmanOpensslWrapper.cpp
+)
+
+add_library(
     sjcl-lib
     STATIC
     src/main/cpp/SJCL.cpp
@@ -93,6 +99,7 @@ find_library( # Sets the name of the path variable.
 target_link_libraries( # Specifies the target library.
                        passman-lib
                        base64-lib
+                       passman-openssl-wrapper-lib
                        sjcl-lib
                        json-lib
 
