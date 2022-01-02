@@ -27,6 +27,7 @@ import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidAlgorithmParameterException;
@@ -37,9 +38,11 @@ import java.security.NoSuchProviderException;
 import java.security.SecureRandom;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.util.Arrays;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 import es.wolfi.app.passman.OfflineStorage;
@@ -47,11 +50,13 @@ import es.wolfi.app.passman.SettingValues;
 
 public class KeyStoreUtils {
 
-    private static final String AndroidKeyStore = "AndroidKeyStore";
+    private static final String ANDROID_KEY_STORE = "AndroidKeyStore";
     private static final String AES_MODE = "AES/GCM/NoPadding";
+    private static final int AES_KEY_SIZE = 256;
     private static final String RANDOM_ALGORITHM = "SHA1PRNG";
     private static final String KEY_ALIAS = "PassmanAndroidDefaultKey";
     private static final int IV_LENGTH = 12;
+    private static final int TAG_LENGTH = 128;
     private static KeyStore keyStore = null;
     private static SharedPreferences settings = null;
 
@@ -62,21 +67,23 @@ public class KeyStoreUtils {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 if (keyStore == null) {
                     Log.d("KeyStoreUtils", "load KeyStore");
-                    keyStore = KeyStore.getInstance(AndroidKeyStore);
+                    keyStore = KeyStore.getInstance(ANDROID_KEY_STORE);
                     keyStore.load(null);
 
                     // KEY_STORE_MIGRATION_STATE == 0 check prevents creating a KeyStore after the first app start and making already stored data unusable
                     if (!keyStore.containsAlias(KEY_ALIAS) && settings.getInt(SettingValues.KEY_STORE_MIGRATION_STATE.toString(), 0) == 0) {
                         Log.d("KeyStoreUtils", "generate new key");
-                        KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, AndroidKeyStore);
+                        KeyGenerator keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE);
                         keyGenerator.init(
                                 new KeyGenParameterSpec.Builder(KEY_ALIAS,
                                         KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                                        .setKeySize(AES_KEY_SIZE)
                                         .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                                         .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                                         .setRandomizedEncryptionRequired(false)
                                         .build());
-                        keyGenerator.generateKey();
+                        SecretKey key = keyGenerator.generateKey();
+                        keyStore.setKeyEntry(KEY_ALIAS, key, null, null);
                     }
                     migrateSharedPreferences();
                 }
@@ -115,28 +122,6 @@ public class KeyStoreUtils {
         return iv;
     }
 
-    private static String byteArrayToHexString(byte[] b) {
-        StringBuilder sb = new StringBuilder(b.length * 2);
-        for (int i = 0; i < b.length; i++) {
-            int v = b[i] & 0xff;
-            if (v < 16) {
-                sb.append('0');
-            }
-            sb.append(Integer.toHexString(v));
-        }
-        return sb.toString().toUpperCase();
-    }
-
-    private static byte[] hexStringToByteArray(String s) {
-        byte[] b = new byte[s.length() / 2];
-        for (int i = 0; i < b.length; i++) {
-            int index = i * 2;
-            int v = Integer.parseInt(s.substring(index, index + 2), 16);
-            b[i] = (byte) v;
-        }
-        return b;
-    }
-
     private static java.security.Key getSecretKey() throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException {
         return keyStore.getKey(KEY_ALIAS, null);
     }
@@ -144,13 +129,55 @@ public class KeyStoreUtils {
     public static String encrypt(String input) {
         try {
             if (input != null && keyStore != null && keyStore.containsAlias(KEY_ALIAS)) {
+                byte[] inputBytes = input.getBytes(StandardCharsets.UTF_8);
+
+                Log.d("KS plain bytes len", "" + inputBytes.length);
                 Cipher c = Cipher.getInstance(AES_MODE);
                 byte[] iv = generateIv();
-                String ivHex = byteArrayToHexString(iv);
-                c.init(Cipher.ENCRYPT_MODE, getSecretKey(), new GCMParameterSpec(128, iv));
-                byte[] encodedBytes = c.doFinal(input.getBytes(StandardCharsets.UTF_8));
+                c.init(Cipher.ENCRYPT_MODE, getSecretKey(), new GCMParameterSpec(TAG_LENGTH, iv));
 
-                return ivHex + Base64.encodeToString(encodedBytes, Base64.DEFAULT);
+                /*byte[] aad = "Whatever I like".getBytes();
+                c.updateAAD(aad);*/
+
+                byte[] updateResult = null;
+                int startpos = 0;
+                int end;
+                do {
+                    end = inputBytes.length;
+                    if ((startpos + 4000) < end) {
+                        end = startpos + 4000;
+                    }
+                    updateResult = c.update(Arrays.copyOfRange(inputBytes, startpos, end));
+                    startpos += 4001;
+                } while (updateResult != null && end < inputBytes.length);
+
+                byte[] encryptedBytes = c.doFinal();
+                Log.d("encrypted: ", new String(encryptedBytes));
+
+                /* test ... */
+                Cipher c2 = Cipher.getInstance(AES_MODE);
+                c2.init(Cipher.DECRYPT_MODE, getSecretKey(), new GCMParameterSpec(TAG_LENGTH, iv));
+
+                /*byte[] updateResult_2 = null;
+                int startpos_2 = 0;
+                int end_2;
+                do {
+                    end_2 = encryptedBytes.length;
+                    if ((startpos_2 + 4000) < end_2) {
+                        end_2 = startpos_2 + 4000;
+                    }
+                    updateResult_2 = c2.update(Arrays.copyOfRange(encryptedBytes, startpos_2, end_2));
+                    startpos_2 += 4001;
+                } while (updateResult_2 != null && end_2 < encryptedBytes.length);*/
+
+                byte[] decrypted = c2.doFinal(encryptedBytes);
+                Log.d("decrypted enc: ", new String(decrypted));
+                /* ... test */
+
+                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                outputStream.write(iv);
+                outputStream.write(encryptedBytes);
+                return Base64.encodeToString(outputStream.toByteArray(), Base64.DEFAULT);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -161,12 +188,12 @@ public class KeyStoreUtils {
 
     public static String decrypt(String encrypted, String fallback) {
         try {
-            if (encrypted != null && keyStore != null && keyStore.containsAlias(KEY_ALIAS) && encrypted.length() >= IV_LENGTH * 2) {
-                String ivHex = encrypted.substring(0, IV_LENGTH * 2);
-                byte[] decoded = Base64.decode(encrypted.substring(IV_LENGTH * 2), Base64.DEFAULT);
+            if (encrypted != null && keyStore != null && keyStore.containsAlias(KEY_ALIAS) && encrypted.length() >= IV_LENGTH) {
+                byte[] decoded = Base64.decode(encrypted, Base64.DEFAULT);
+                byte[] iv = Arrays.copyOfRange(decoded, 0, IV_LENGTH);
                 Cipher c = Cipher.getInstance(AES_MODE);
-                c.init(Cipher.DECRYPT_MODE, getSecretKey(), new GCMParameterSpec(128, hexStringToByteArray(ivHex)));
-                byte[] decrypted = c.doFinal(decoded);
+                c.init(Cipher.DECRYPT_MODE, getSecretKey(), new GCMParameterSpec(TAG_LENGTH, iv));
+                byte[] decrypted = c.doFinal(decoded, IV_LENGTH, decoded.length - IV_LENGTH);
 
                 return new String(decrypted);
             }
