@@ -3,6 +3,7 @@
  *
  * @copyright Copyright (c) 2016, Sander Brand (brantje@gmail.com)
  * @copyright Copyright (c) 2016, Marcos Zuriaga Miguel (wolfi@wolfi.es)
+ * @copyright Copyright (c) 2022, Timo Triebensky (timo@binsky.org)
  * @license GNU AGPL version 3 or any later version
  * <p>
  * This program is free software: you can redistribute it and/or modify
@@ -26,12 +27,12 @@ import android.content.Context;
 import android.util.Log;
 
 import com.loopj.android.http.AsyncHttpResponseHandler;
-import com.loopj.android.http.RequestParams;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -64,6 +65,7 @@ public class Credential extends Core implements Filterable {
     protected String otp;
     protected boolean hidden;
     protected String sharedKey;
+    private String sharedKeyDecrypted;
     protected String compromised;
 
     protected Vault vault;
@@ -108,11 +110,11 @@ public class Credential extends Core implements Filterable {
     }
 
     public String getDescription() {
-        return vault.decryptString(description);
+        return decryptString(description);
     }
 
     public void setDescription(String description) {
-        this.description = vault.encryptString(description);
+        this.description = encryptString(description);
     }
 
     public long getCreated() {
@@ -128,43 +130,43 @@ public class Credential extends Core implements Filterable {
     }
 
     public String getTags() {
-        return vault.decryptString(tags);
+        return decryptString(tags);
     }
 
     public void setTags(String tags) {
-        this.tags = vault.encryptString(tags);
+        this.tags = encryptString(tags);
     }
 
     public String getEmail() {
-        return vault.decryptString(email);
+        return decryptString(email);
     }
 
     public void setEmail(String email) {
-        this.email = vault.encryptString(email);
+        this.email = encryptString(email);
     }
 
     public String getUsername() {
-        return vault.decryptString(username);
+        return decryptString(username);
     }
 
     public void setUsername(String username) {
-        this.username = vault.encryptString(username);
+        this.username = encryptString(username);
     }
 
     public String getPassword() {
-        return vault.decryptString(password);
+        return decryptString(password);
     }
 
     public void setPassword(String password) {
-        this.password = vault.encryptString(password);
+        this.password = encryptString(password);
     }
 
     public String getUrl() {
-        return vault.decryptString(url);
+        return decryptString(url);
     }
 
     public void setUrl(String url) {
-        this.url = vault.encryptString(url);
+        this.url = encryptString(url);
     }
 
     public String getFavicon() {
@@ -219,15 +221,15 @@ public class Credential extends Core implements Filterable {
     }
 
     public String getFiles() {
-        return vault.decryptString(files);
+        return decryptString(files);
     }
 
     public void setFiles(String files) {
         if (files.equals("")) {
-            this.files = vault.encryptString(files);
+            this.files = encryptString(files);
             return;
         }
-        this.files = vault.encryptRawStringData(files);
+        this.files = encryptRawStringData(files);
     }
 
     public List<CustomField> getCustomFieldsList() {
@@ -250,23 +252,23 @@ public class Credential extends Core implements Filterable {
     }
 
     public String getCustomFields() {
-        return vault.decryptString(customFields);
+        return decryptString(customFields);
     }
 
     public void setCustomFields(String customFields) {
         if (customFields.equals("")) {
-            this.customFields = vault.encryptString(customFields);
+            this.customFields = encryptString(customFields);
             return;
         }
-        this.customFields = vault.encryptRawStringData(customFields);
+        this.customFields = encryptRawStringData(customFields);
     }
 
     public String getOtp() {
-        return vault.decryptString(otp);
+        return decryptString(otp);
     }
 
     public void setOtp(String otp) {
-        this.otp = vault.encryptString(otp);
+        this.otp = encryptString(otp);
     }
 
     public boolean isHidden() {
@@ -287,7 +289,7 @@ public class Credential extends Core implements Filterable {
 
     public String getCompromised() {
         if (compromised != null && !compromised.equals("null")) {
-            String decryptedCompromised = vault.decryptString(compromised);
+            String decryptedCompromised = decryptString(compromised);
             if (decryptedCompromised != null && !decryptedCompromised.equals("")) {
                 return decryptedCompromised;
             }
@@ -296,7 +298,7 @@ public class Credential extends Core implements Filterable {
     }
 
     public void setCompromised(boolean compromised) {
-        this.compromised = vault.encryptRawStringData(compromised ? "true" : "false");
+        this.compromised = encryptRawStringData(compromised ? "true" : "false");
     }
 
     public Vault getVault() {
@@ -308,15 +310,51 @@ public class Credential extends Core implements Filterable {
         vaultId = vault.vault_id;
     }
 
+    public String encryptString(String plaintext) {
+        if (this.isEncryptedWithSharedKey()) {
+            return vault.encryptString(plaintext, this.sharedKeyDecrypted);
+        }
+        return vault.encryptString(plaintext);
+    }
+
+    public String encryptRawStringData(String plaintext) {
+        if (this.isEncryptedWithSharedKey()) {
+            return vault.encryptRawStringData(plaintext, this.sharedKeyDecrypted);
+        }
+        return vault.encryptRawStringData(plaintext);
+    }
+
+    public String decryptString(String cryptogram) {
+        if (this.isEncryptedWithSharedKey()) {
+            return vault.decryptString(cryptogram, this.sharedKeyDecrypted);
+        }
+        return vault.decryptString(cryptogram);
+    }
+
+    private boolean isEncryptedWithSharedKey() {
+        if (this.sharedKeyDecrypted == null && this.sharedKey != null && this.sharedKey.length() > 1 && !this.sharedKey.equals("null")) {
+            this.sharedKeyDecrypted = vault.decryptString(this.sharedKey);
+        }
+        return this.sharedKeyDecrypted != null && this.sharedKeyDecrypted.length() > 1 && !this.sharedKeyDecrypted.equals("null");
+    }
+
+    public void resetDecryptedSharedKey() {
+        this.sharedKeyDecrypted = null;
+    }
+
     public JSONObject getAsJSONObject() throws JSONException {
         JSONObject params = new JSONObject();
 
         JSONObject icon = null;
 
         try {
-            icon = new JSONObject();
-            icon.put("type", false);
-            icon.put("content", "");
+            if (favicon != null && !favicon.equals("") && !favicon.equals("null")) {
+                icon = new JSONObject(favicon);
+            } else {
+                icon = new JSONObject();
+                icon.put("type", false);
+                icon.put("content", "");
+            }
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -348,10 +386,8 @@ public class Credential extends Core implements Filterable {
         return params;
     }
 
-    public RequestParams getAsRequestParams(boolean forUpdate, boolean useJsonStreamer) {
-        RequestParams params = new RequestParams();
-        params.setUseJsonStreamer(useJsonStreamer);
-
+    public JSONObject getAsJsonObjectForApiRequest(boolean forUpdate) throws JSONException {
+        JSONObject params = new JSONObject();
         JSONObject icon = null;
 
         if (forUpdate) {
@@ -453,44 +489,47 @@ public class Credential extends Core implements Filterable {
         return c;
     }
 
+    public static Credential clone(Credential input) throws JSONException {
+        return Credential.fromJSON(input.getAsJSONObject(), input.getVault());
+    }
+
     public void save(Context c, final AsyncHttpResponseHandler responseHandler) {
         try {
-            requestAPI(c, "credentials", getAsRequestParams(false, true), "POST", responseHandler);
-        } catch (MalformedURLException e) {
+            requestAPI(c, "credentials", getAsJsonObjectForApiRequest(false), "POST", responseHandler);
+        } catch (MalformedURLException | JSONException | UnsupportedEncodingException e) {
             e.printStackTrace();
         }
     }
 
     public void update(Context c, final AsyncHttpResponseHandler responseHandler) {
         try {
-            requestAPI(c, "credentials/" + getGuid(), getAsRequestParams(true, true), "PATCH", responseHandler);
-        } catch (MalformedURLException e) {
+            requestAPI(c, "credentials/" + getGuid(), getAsJsonObjectForApiRequest(true), "PATCH", responseHandler);
+        } catch (MalformedURLException | JSONException | UnsupportedEncodingException e) {
             e.printStackTrace();
         }
     }
 
     public void sendFileDeleteRequest(Context c, int file_id, final AsyncHttpResponseHandler responseHandler) {
-        RequestParams params = new RequestParams();
+        JSONObject params = new JSONObject();
         try {
             requestAPI(c, "file/" + file_id, params, "DELETE", responseHandler);
-        } catch (MalformedURLException e) {
+        } catch (MalformedURLException | UnsupportedEncodingException e) {
             e.printStackTrace();
         }
     }
 
     public void uploadFile(Context c, String encodedFile, String fileName, String mimeType, int fileSize, final AsyncHttpResponseHandler responseHandler, ProgressDialog progress) {
-        RequestParams params = new RequestParams();
-        params.setUseJsonStreamer(true);
+        JSONObject params = new JSONObject();
 
         progress.setMessage(c.getString(R.string.wait_while_encrypting));
         try {
-            params.put("filename", vault.encryptString(fileName));
-            params.put("data", vault.encryptRawStringData(encodedFile));
+            params.put("filename", encryptString(fileName));
+            params.put("data", encryptRawStringData(encodedFile));
             params.put("mimetype", mimeType);
             params.put("size", fileSize);
             progress.setMessage(c.getString(R.string.wait_while_uploading));
             requestAPI(c, "file", params, "POST", responseHandler);
-        } catch (MalformedURLException e) {
+        } catch (MalformedURLException | JSONException | UnsupportedEncodingException e) {
             e.printStackTrace();
         }
     }
