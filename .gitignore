@@ -8,6 +8,8 @@
 /captures
 .externalNativeBuild
 app/.cxx
+fastlane/report.xml
+
 # Built application files
 *.apk
 *.ap_
