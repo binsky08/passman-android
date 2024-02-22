@@ -21,6 +21,11 @@ platform :android do
     gradle(task: "test")
   end
 
+  desc "Prepare build dependencies"
+  lane :prepare do
+    gradle(tasks: ["clean"])
+  end
+
   desc "Create and sign a new build"
   lane :build do
     gradle(tasks: ["clean", "assembleRelease", "bundleRelease"])
