@@ -77,15 +77,18 @@ import es.wolfi.utils.KeyStoreUtils;
 public abstract class Core {
     protected static final String LOG_TAG = "API_LIB";
     protected static final String JSON_CONTENT_TYPE = "application/json";
+    protected static final String API_URL_TEMPLATE = "/index.php/apps/%s/api/v2/";
+    protected static final String API_URL_INTERNAL_TEMPLATE = "/index.php/apps/%s/api/internal/";
+    public static final String ALTERNATIVE_APP_ID = "passman-next";
 
     protected static SingleSignOnAccount ssoAccount;
     protected static String host;
-    protected static String host_internal;
+    protected static String host_url;
+    protected static String host_url_internal;
     protected static String username;
     protected static String password;
+    protected static String appId = "passman";
     protected static String version_name;
-    protected static String API_URL = "/index.php/apps/passman/api/v2/";
-    protected static String API_URL_INTERNAL = "/index.php/apps/passman/api/internal/";
     protected static int version_number = 0;
 
 
@@ -97,18 +100,41 @@ public abstract class Core {
         try {
             Core.ssoAccount = SingleAccountHelper.getCurrentSingleSignOnAccount(c);
         } catch (java.lang.NoSuchMethodError |
-                NextcloudFilesAppAccountNotFoundException | NoCurrentAccountSelectedException e) {
+                 NextcloudFilesAppAccountNotFoundException | NoCurrentAccountSelectedException e) {
             e.printStackTrace();
         }
     }
 
     public static String getAPIHost() {
-        return host;
+        return host_url;
+    }
+
+    public static String getAPIUrl() {
+        return getAPIUrl(appId);
+    }
+
+    public static String getAPIUrl(String _appId) {
+        if (_appId == null || _appId.isEmpty()) {
+            _appId = appId;
+        }
+        return String.format(API_URL_TEMPLATE, _appId);
+    }
+
+    public static String getAPIUrlInternal() {
+        return getAPIUrlInternal(appId);
+    }
+
+    public static String getAPIUrlInternal(String _appId) {
+        if (_appId == null || _appId.isEmpty()) {
+            _appId = appId;
+        }
+        return String.format(API_URL_INTERNAL_TEMPLATE, _appId);
     }
 
     public static void setAPIHost(String host) {
-        Core.host = host.concat(API_URL);
-        Core.host_internal = host.concat(API_URL_INTERNAL);
+        Core.host = host;
+        Core.host_url = host.concat(Core.getAPIUrl());
+        Core.host_url_internal = host.concat(Core.getAPIUrlInternal());
     }
 
     public static String getAPIUsername() {
@@ -139,7 +165,7 @@ public abstract class Core {
         return SettingsCache.getInt(SettingValues.REQUEST_RESPONSE_TIMEOUT.toString(), 120) * 1000;
     }
 
-    public static void requestInternalAPIGET(Context c, String endpoint, final FutureCallback<String> callback) {
+    public static void requestInternalAPIGET(Context c, String endpoint, final FutureCallback<String> callback, String optionalCustomAppId) {
         final AsyncHttpResponseHandler responseHandler = new CoreAPIGETResponseHandler(callback);
         if (ssoAccount != null) {
             final Map<String, List<String>> header = new HashMap<>();
@@ -147,7 +173,7 @@ public abstract class Core {
 
             NextcloudRequest nextcloudRequest = new NextcloudRequest.Builder()
                     .setMethod("GET")
-                    .setUrl(Uri.encode(API_URL_INTERNAL.concat(endpoint), "/"))
+                    .setUrl(Uri.encode(getAPIUrlInternal(optionalCustomAppId).concat(endpoint), "/"))
                     .build();
             new SyncedRequestTask(nextcloudRequest, ssoAccount, responseHandler, c).execute();
         } else {
@@ -159,7 +185,11 @@ public abstract class Core {
             client.addHeader("Content-Type", JSON_CONTENT_TYPE);
 
             try {
-                client.get(host_internal.concat(endpoint), responseHandler);
+                String useHostUrl = host_url_internal;
+                if (optionalCustomAppId != null && !optionalCustomAppId.isEmpty()) {
+                    useHostUrl = host.concat(getAPIUrlInternal(optionalCustomAppId));
+                }
+                client.get(useHostUrl.concat(endpoint), responseHandler);
             } catch (Exception e) {
                 responseHandler.onFailure(0, null, null, e);
             }
@@ -174,7 +204,7 @@ public abstract class Core {
 
             NextcloudRequest nextcloudRequest = new NextcloudRequest.Builder()
                     .setMethod("GET")
-                    .setUrl(Uri.encode(API_URL.concat(endpoint), "/"))
+                    .setUrl(Uri.encode(getAPIUrl().concat(endpoint), "/"))
                     .build();
             new SyncedRequestTask(nextcloudRequest, ssoAccount, responseHandler, c).execute();
         } else {
@@ -186,7 +216,7 @@ public abstract class Core {
             client.addHeader("Content-Type", JSON_CONTENT_TYPE);
 
             try {
-                client.get(host.concat(endpoint), responseHandler);
+                client.get(host_url.concat(endpoint), responseHandler);
             } catch (Exception e) {
                 responseHandler.onFailure(0, null, null, e);
             }
@@ -203,14 +233,14 @@ public abstract class Core {
 
             NextcloudRequest nextcloudRequest = new NextcloudRequest.Builder()
                     .setMethod(requestType)
-                    .setUrl(Uri.encode(API_URL.concat(endpoint), "/"))
+                    .setUrl(Uri.encode(getAPIUrl().concat(endpoint), "/"))
                     .setRequestBody(jsonPostData.toString())
                     .setHeader(header)
                     .build();
 
             new SyncedRequestTask(nextcloudRequest, ssoAccount, responseHandler, c).execute();
         } else {
-            URL url = new URL(host.concat(endpoint));
+            URL url = new URL(host_url.concat(endpoint));
             AsyncHttpClient client = new AsyncHttpClient();
             client.setBasicAuth(username, password);
             client.setConnectTimeout(getConnectTimeout(c));
@@ -272,7 +302,7 @@ public abstract class Core {
                     cb.onCompleted(jsonException, null);
                 }
             }
-        });
+        }, null);
     }
 
     public static boolean applyVersionJSON(String version) throws JSONException, NumberFormatException {
@@ -293,7 +323,21 @@ public abstract class Core {
                     showConnectionErrorHint(view.getContext());
                 }
             }
-        });
+        }, null);
+    }
+
+    public static void testAppId(Context context, String customAppId, FutureCallback<Boolean> callback) {
+        requestInternalAPIGET(context, "version", (e, result) -> {
+            if (e == null || result != null && !result.contains("404")) {
+                callback.onCompleted(e, true);
+            } else {
+                callback.onCompleted(e, false);
+            }
+        }, customAppId);
+    }
+
+    public static void setAppId(String _appId) {
+        appId = _appId;
     }
 
     private static void showConnectionErrorHint(Context context) {
@@ -338,36 +382,49 @@ public abstract class Core {
         Log.d(LOG_TAG, "Pass: " + pass.replaceAll("(?s).", "*"));
 
         setUpAPI(c, host, user, pass);
-        getAPIVersion(c, new FutureCallback<String>() {
-            @Override
-            public void onCompleted(Exception e, String result) {
-                boolean ret = true;
 
-                if (e != null) {
-                    if (e.getMessage().equals("401")) {
-                        if (toast) {
-                            Toast.makeText(c, c.getString(R.string.wrongNCSettings), Toast.LENGTH_LONG).show();
-                        }
-                        ret = false;
-                    } else if (e.getMessage().contains("Unable to resolve host") || e.getMessage().contains("Invalid URI")) {
-                        if (toast) {
-                            Toast.makeText(c, c.getString(R.string.wrongNCUrl), Toast.LENGTH_LONG).show();
-                        }
-                        ret = false;
-                    } else {
-                        Log.e(LOG_TAG, "Error: " + e.getMessage(), e);
-                        if (toast) {
-                            Toast.makeText(c, c.getString(R.string.net_error) + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
-                        }
-                        ret = false;
+        FutureCallback<String> getApiVersionCallback = (e, result) -> {
+            boolean ret = true;
+
+            if (e != null) {
+                String message = e.getMessage();
+                if (message != null && message.equals("401")) {
+                    if (toast) {
+                        Toast.makeText(c, c.getString(R.string.wrongNCSettings), Toast.LENGTH_LONG).show();
                     }
+                    ret = false;
+                } else if (message != null && (message.contains("Unable to resolve host") || message.contains("Invalid URI"))) {
+                    if (toast) {
+                        Toast.makeText(c, c.getString(R.string.wrongNCUrl), Toast.LENGTH_LONG).show();
+                    }
+                    ret = false;
+                } else if (message != null) {
+                    Log.e(LOG_TAG, "Error: " + e.getMessage(), e);
+                    if (toast) {
+                        Toast.makeText(c, c.getString(R.string.net_error) + ": " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                    ret = false;
                 } else {
-                    Toast.makeText(c, host, Toast.LENGTH_LONG).show();
+                    Log.e(LOG_TAG, "Unknown error", e);
+                    if (toast) {
+                        Toast.makeText(c, c.getString(R.string.net_error), Toast.LENGTH_LONG).show();
+                    }
+                    ret = false;
                 }
-
-                cb.onCompleted(e, ret);
+            } else {
+                Toast.makeText(c, host, Toast.LENGTH_LONG).show();
             }
-        });
+
+            cb.onCompleted(e, ret);
+        };
+
+        FutureCallback<Boolean> appIdTestingCb = (e1, isTestedAppId) -> {
+            if (isTestedAppId) {
+                appId = ALTERNATIVE_APP_ID;
+            }
+            getAPIVersion(c, getApiVersionCallback);
+        };
+        testAppId(c, ALTERNATIVE_APP_ID, appIdTestingCb);
     }
 
     private static class NCHeader implements Header {

@@ -47,6 +47,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.koushikdutta.async.future.FutureCallback;
 import com.loopj.android.http.AsyncHttpResponseHandler;
 
 import org.json.JSONException;
@@ -201,7 +202,13 @@ public class CredentialEditFragment extends Fragment implements View.OnClickList
     public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        Vault.checkCloudConnectionAndShowHint(view);
+        FutureCallback<Boolean> appIdTestingCb = (e1, isTestedAppId) -> {
+            if (isTestedAppId) {
+                Vault.setAppId(Vault.ALTERNATIVE_APP_ID);
+            }
+            Vault.checkCloudConnectionAndShowHint(view);
+        };
+        Vault.testAppId(view.getContext(), Vault.ALTERNATIVE_APP_ID, appIdTestingCb);
 
         filesListRecyclerView = (RecyclerView) view.findViewById(R.id.filesList);
         filesListRecyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
