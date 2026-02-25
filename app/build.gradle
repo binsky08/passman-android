@@ -101,7 +101,7 @@ android {
         }
     }
 
-    lintOptions {
+    lint {
         disable 'MissingTranslation'
     }
     ndkVersion '28.1.13356709'
