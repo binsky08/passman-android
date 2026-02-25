@@ -33,7 +33,7 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId "es.wolfi.app.passman"
-        minSdkVersion 21
+        minSdkVersion 23
         targetSdkVersion 35
         versionCode 20
         versionName "1.6.0"
