@@ -107,4 +107,7 @@
     <string name="autofill_manual_search_fallback">Recherche manuelle des informations d\'identification comme option de secours de saisie automatique</string>
     <string name="set_as_autofill_service">Définir comme service de saisie automatique</string>
     <string name="algorithm">Algorithme</string>
-    </resources>
+    <string name="enable_case_insensitive_credential_label_sort">Activer le tri des informations d\'identification non sensible à la casse</string>
+    <string name="credential_list_sort_settings">Paramètres de tri des informations d\'identification</string>
+    <string name="restore_custom_credential_sort_order">Restaurer l\'ordre de tri des informations d\'identification personnalisé</string>
+</resources>
